@@ -1,0 +1,166 @@
+extends RigidBody3D
+
+signal roll_finished(value: int)
+
+@onready var faces_container: Node3D = $Faces
+
+var is_rolling: bool = false
+var settle_timer: float = 0.0
+
+func _ready() -> void:
+    # Prevent the die from falling before the first roll
+    freeze = true
+
+func roll(spawn_position: Vector3) -> void:
+    # Reset physics state and place the die above the table
+    freeze = false
+    sleeping = false
+    is_rolling = true
+    settle_timer = 0.0
+    
+    global_position = spawn_position
+    linear_velocity = Vector3.ZERO
+    angular_velocity = Vector3.ZERO
+    
+    # Give the die a random starting rotation
+    rotation = Vector3(
+        randf_range(0, TAU),
+        randf_range(0, TAU),
+        randf_range(0, TAU)
+    )
+    
+    # Apply random sideways toss and upward pop
+    var throw_impulse := Vector3(
+        randf_range(-3.0, 3.0),
+        randf_range(2.0, 4.0),
+        randf_range(-3.0, 3.0)
+    )
+
+apply_central_impulse(throw_impulse)
+    
+    # Apply random spin
+    var spin_impulse := Vector3(
+        randf_range(-10.0, 10.0),
+        randf_range(-10.0, 10.0),
+        randf_range(-10.0, 10.0)
+    )
+    apply_torque_impulse(spin_impulse)
+
+func _physics_process(delta: float) -> void:
+    if not is_rolling:
+        return
+
+# Check if the die has nearly stopped moving
+    if linear_velocity.length() < 0.05 and angular_velocity.length() < 0.05:
+        settle_timer += delta
+        # Wait 0.25 seconds of stillness to avoid false reads mid-bounce
+        if settle_timer >= 0.25:
+            is_rolling = false
+            var result: int = _get_top_face()
+            roll_finished.emit(result)
+    else:
+        settle_timer = 0.0
+
+func _get_top_face() -> int:
+    var highest_y: float = -INF
+    var top_value: int = 1
+    
+    # Find whichever face marker is highest in world space
+    for marker in faces_container.get_children():
+        if marker is Marker3D:
+            if marker.global_position.y > highest_y:
+                highest_y = marker.global_position.y
+                top_value = int(marker.name)
+                
+    return top_value
+
+extends Node
+
+@export var dice_numbers: Array[int] = [1, 2, 3, 4, 5, 6]
+
+func editdice(new_numbers: Array[int]) -> void:
+    if new_numbers.is_empty():
+        push_error("The dice list cannot be empty.")
+        return
+
+    dice_numbers = new_numbers.duplicate()
+
+func roll_dice() -> int:
+    return dice_numbers.pick_random()
+
+extends Node
+
+@export var dice_numbers: Array[int] = [1, 2, 3, 4, 5, 6]
+
+# Replace the whole die (great for picking up a brand new die)
+func edit_dice(new_numbers: Array[int]) -> void:
+    if new_numbers.is_empty():
+        push_error("The dice list cannot be empty.")
+        return
+    dice_numbers = new_numbers.duplicate()
+
+# Upgrade or change a single face by its index (0 is the 1st face, 5 is the 6th)
+func set_face(face_index: int, new_value: int) -> void:
+    if face_index >= 0 and face_index < dice_numbers.size():
+        dice_numbers[face_index] = new_value
+    else:
+        push_error("Invalid face index.")
+
+# Add a bonus to a specific face (e.g., "+2 to face 0")
+func upgrade_face(face_index: int, amount: int) -> void:
+    if face_index >= 0 and face_index < dice_numbers.size():
+        dice_numbers[face_index] += amount
+
+# Add a brand new face (turns a 6-sided die into a 7-sided die)
+func add_face(new_value: int) -> void:
+    dice_numbers.append(new_value)
+
+# Remove a face (trims bad numbers, like removing a 1)
+func remove_face(face_index: int) -> void:
+    if dice_numbers.size() <= 1:
+        push_error("Cannot remove the last face of a die!")
+        return
+    if face_index >= 0 and face_index < dice_numbers.size():
+        dice_numbers.remove_at(face_index)
+
+# Roll the die
+func roll_dice() -> int:
+    return dice_numbers.pick_random()
+
+extends Button
+
+# Creates a text box in the Godot Inspector so you can name this button
+@export var button_name: String = “Button"
+
+func _ready() -> void:
+    # Connects this button's own "pressed" signal to the function below
+    pressed.connect(_on_pressed)
+
+func _on_pressed() -> void:
+    print(button_name + " was clicked!")
+    # Add whatever else you want to happen here
+
+extends Node3D
+
+# Rotations (in degrees) that put sides 1 through 6 facing UP
+# Adjust these angles to match how your specific 3D die model is oriented
+var face_rotations: Array[Vector3] = [
+    Vector3(0, 0, 0),       # Side 1 up
+    Vector3(90, 0, 0),      # Side 2 up
+    Vector3(0, 0, -90),     # Side 3 up
+    Vector3(0, 0, 90),      # Side 4 up
+    Vector3(-90, 0, 0),     # Side 5 up
+    Vector3(180, 0, 0)      # Side 6 up
+]
+
+func roll_die() -> int:
+    var random_index: int = randi() % face_rotations.size()
+    var target_rotation: Vector3 = face_rotations[random_index]
+    
+    # Smoothly spin the die to land on the chosen side
+    var tween := create_tween()
+    tween.tween_property(self, "rotation_degrees", target_rotation + Vector3(360, 360, 0), 0.5)
+    
+    var rolled_value: int = random_index + 1
+    print("Rolled a ", rolled_value)
+    return rolled_value
